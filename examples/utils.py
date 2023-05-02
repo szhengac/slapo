@@ -25,7 +25,7 @@ def get_ds_config(
     logger.info(f"fp16={fp16}, bf16={bf16}")
     config_dict = {
         "help": desc,
-        "steps_per_print": 10,
+        "steps_per_print": 4,
         "optimizer": {"type": "AdamW", "params": {"lr": 0.0001}},
         "fp16": {"enabled": fp16, "initial_scale_power": 12},
         "bf16": {"enabled": bf16},
@@ -46,6 +46,12 @@ def get_ds_config(
                 "reduce_scatter": True,
                 "contiguous_gradients": False,
                 "prefetch_bucket_size": 5e8,
+                "stage3_max_live_parameters" : 1e9,
+                "stage3_max_reuse_distance" : 1e9,
+                "stage3_param_persistence_threshold" : 1e6,
+                "sub_group_size" : 1e12,
+                "allgather_bucket_size": 5e8,
+                "reduce_bucket_size": 5e8,
             },
             "zero_allow_untested_optimizer": True,
         }

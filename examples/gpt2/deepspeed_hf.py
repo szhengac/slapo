@@ -26,6 +26,9 @@ from examples.utils import (
 
 from examples.data_util import get_dataloader
 
+from epoi.inject import InjectModuleContext
+
+
 SINGLE_DEVICE_FOR_DEBUG = False
 
 logger = get_logger()
@@ -99,9 +102,25 @@ def train(args):
     logger.info(config, ranks=[0])
 
     report_memory(msg="Before creating model")
-    with slapo.init_empty_weights(enable=enable_pipeline):
-        model = GPT2LMHeadModel(config)
-    report_memory(msg="After creating model")
+    ds_config_dict = None
+    if enable_pipeline and args.tmp == 1:
+        with slapo.init_empty_weights(enable=enable_pipeline):
+            model = GPT2LMHeadModel(config)
+    else:
+        # if the TP == 1 use zero 3, otherwise disable ZeRO.
+        zero_opt_stage = 3 if args.tmp == 1 else 0
+        ds_config_dict = get_ds_config(
+            batch_size,
+            micro_batch_size,
+            args.fp16,
+            zero_opt_stage,
+            f"ZeRO-{zero_opt_stage}",
+            args.bf16,
+        )
+        with InjectModuleContext():
+            with deepspeed.zero.Init(config_dict_or_path=ds_config_dict):
+                model = GPT2LMHeadModel(config)
+        report_memory(msg="After creating model")
 
     # Evenly partition layers for pipelining.
     if enable_pipeline:
@@ -113,8 +132,9 @@ def train(args):
     logger.info(f"Pipeline cuts: {pipeline_cuts}", ranks=0)
 
     if args.disable_schedule:
-        assert not enable_pipeline
-        sch = slapo.create_schedule(model, group=group)
+        #assert not enable_pipeline
+        #sch = slapo.create_schedule(model, group=group)
+        sch = None
     else:
         sch = apply_schedule(
             model,
@@ -132,7 +152,11 @@ def train(args):
             sequence_parallel=args.sequence_parallel,
             checkpoint_method=args.checkpoint_method,
         )
-    tp_rank = sch.rank
+
+    if args.disable_schedule:
+        tp_rank = 0
+    else:
+        tp_rank = sch.rank
 
     loss_fct = ParallelCrossEntropy(group=group)
 
@@ -178,31 +202,34 @@ def train(args):
         if batch_size is None and micro_batch_size is not None:
             batch_size = micro_batch_size * args.world_size
 
-        # if the TP == 1 use zero 3, otherwise disable ZeRO.
-        zero_opt_stage = 3 if args.tmp == 1 else 0
         logger.info(f"BS={batch_size}, MBS={micro_batch_size}", ranks=0)
-        ds_config_dict = get_ds_config(
-            batch_size,
-            micro_batch_size,
-            args.fp16,
-            zero_opt_stage,
-            f"ZeRO-{zero_opt_stage}",
-            args.bf16,
-        )
-        model, _ = slapo.build(
-            sch,
-            topology=topology,
-            target="deepspeed",
+        #model, _ = slapo.build(
+        #    sch,
+        #    topology=topology,
+        #    target="deepspeed",
+        #    config=ds_config_dict,
+        #    init_weights=False,
+        #)
+        #model = model.to(device)
+        from apex.optimizers import FusedAdam
+        AdamOptimizer = FusedAdam
+        optimizer = AdamOptimizer([p for p in model.parameters() if p.requires_grad],
+                                  lr=1e-5,
+                                  betas=(0.9, 0.95))
+        model, optimizer, _, _ = deepspeed.initialize(
+            model=model,
             config=ds_config_dict,
-            init_weights=model._init_weights,
+            model_parameters=[p for p in model.parameters() if p.requires_grad],
+            optimizer=optimizer,
+            mpu=None,
+            dist_init_required=True,
         )
-        model = model.to(device)
     report_memory(msg="After building model")
 
     pp_rank = None if args.disable_pipeline else model.mpu.get_pipe_parallel_rank()
     set_random_seed(
         2013,
-        model.mpu.get_data_parallel_rank(),
+        model.mpu.get_data_parallel_rank() if model.mpu else dist.get_rank(),
         pp_rank,
         tp_rank,
         always_enable_tp_seed=args.sequence_parallel,

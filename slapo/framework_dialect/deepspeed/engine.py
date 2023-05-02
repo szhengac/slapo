@@ -22,13 +22,14 @@ def init_ds_engine(model, **kwargs):
         raise ValueError("DeepSpeed config not provided.")
 
     mpu = kwargs.get("topology", None)
-    if isinstance(model, PipelineModule):
-        # If the model is already a PipelineModule, the device grid (i.e., mesh)
-        # is already configured, so we pass mpu=None to deepspeed.initialize to
-        # avoid re-configuration.
-        mpu = None
-    elif mpu is not None and isinstance(mpu, PipeModelDataParallelTopology):
-        mpu = PipelineParallelGrid(topology=mpu)
+    #if isinstance(model, PipelineModule):
+    #    # If the model is already a PipelineModule, the device grid (i.e., mesh)
+    #    # is already configured, so we pass mpu=None to deepspeed.initialize to
+    #    # avoid re-configuration.
+    #    mpu = None
+    #elif mpu is not None and isinstance(mpu, PipeModelDataParallelTopology):
+    #    mpu = PipelineParallelGrid(topology=mpu)
+    mpu = None
 
     # pylint: disable=unbalanced-tuple-unpacking
     model, optimizer, _, _ = deepspeed.initialize(
@@ -36,5 +37,6 @@ def init_ds_engine(model, **kwargs):
         config=kwargs["config"],
         model_parameters=[p for p in model.parameters() if p.requires_grad],
         mpu=mpu,
+        dist_init_required=True,
     )
     return model, optimizer
