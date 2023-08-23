@@ -4,7 +4,7 @@
 
 # This script is used to run GPT2 training with 3D parallelism enabled.
 # It is tested on a single AWS p3d instance with 8*V100 GPUs.
-CUDA_LAUNCH_BLOCKING=1 deepspeed deepspeed_hf.py \
+CUDA_LAUNCH_BLOCKING=0 deepspeed deepspeed_hf.py \
 	--batch_size 32 \
 	--micro_batch_size 4 \
 	--model_name gpt2-xl \
